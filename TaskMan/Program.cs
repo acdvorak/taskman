@@ -1,8 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using Mono.Options;
@@ -11,12 +11,9 @@ namespace TaskMan
 {
     internal static class Program
     {
-        private const int SW_SHOWNORMAL = 1;
-        private const int SW_SHOWMINIMIZED = 2;
-        private const int SW_SHOWMAXIMIZED = 3;
-
-        [DllImport("user32.dll")]
-        private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+        private const int MaxTries = 5;
+        private static int _numTries = 0;
+        private static double _delayInSec = 3;
 
         /// <summary>
         ///     The main entry point for the application.
@@ -25,34 +22,43 @@ namespace TaskMan
         private static void Main(string[] args)
         {
             var options = new OptionSet
-                {
-                    { "h|?|help", v => ShowHelp() }
-                };
+                          {
+                              { "d|delay", d => _delayInSec = double.Parse(d) },
+                              { "h|?|help", v => ShowHelp() }
+                          };
 
             args = options.Parse(args).ToArray();
 
-            if (!args.Any())
-                args = new[] { "taskmgr" };
+            const string appName = "taskmgr";
 
-            var processes = args.SelectMany(Process.GetProcessesByName).ToArray();
-
+            var processes = Process.GetProcessesByName(appName).ToArray();
             if (processes.Any())
             {
-                foreach (var process in processes)
-                {
-                    Minimize(process);
-                }
+                processes.ForEach(Minimize);
             }
             else
             {
-                foreach (var fileName in args)
-                {
-                    var process = Process.Start(new ProcessStartInfo { FileName = fileName });
-                    while (!Minimize(process))
-                    {
-                        Thread.Sleep(TimeSpan.FromSeconds(0.1));
-                    }
-                }
+                Minimize(StartProcess(appName));
+            }
+        }
+
+        private static Process StartProcess(string fileName)
+        {
+            return Process.Start(new ProcessStartInfo { FileName = fileName });
+        }
+
+        private static bool CanContinue()
+        {
+            if (_numTries++ > MaxTries)
+                return false;
+            Thread.Sleep(TimeSpan.FromSeconds(_delayInSec));
+            return true;
+        }
+
+        private static void Minimize(Process process)
+        {
+            while (CanContinue() && !Win32.Interop.Minimize(process))
+            {
             }
         }
 
@@ -60,19 +66,23 @@ namespace TaskMan
         {
             var fullPath = Process.GetCurrentProcess().MainModule.FileVersionInfo.FileName;
             var fileName = Path.GetFileName(fullPath);
-            var text = string.Format("{0}: Starts and immediately minimizes one or more programs.\n\n" +
-                                     "Usage: {0} [ taskmgr [ notepad [ ... ] ] ]\n\n" +
-                                     "If invoked with no arguments, starts and minimizes taskmgr by default.",
+            var text = string.Format("{0}: Starts and immediately minimizes taskmgr.exe.\n\n" +
+                                     "Usage: {0} [ --delay NUM_SECS ]\n\n",
                                      fileName);
             var caption = string.Format("{0} help", fileName);
             MessageBox.Show(text, caption);
             Environment.Exit(0);
         }
+    }
 
-        private static bool Minimize(Process process)
+    internal static class ExtensionMethods
+    {
+        public static void ForEach<T>(this IEnumerable<T> enumerable, Action<T> action)
         {
-            var hWnd = process.MainWindowHandle;
-            return hWnd != IntPtr.Zero && ShowWindowAsync(hWnd, SW_SHOWMINIMIZED);
+            foreach (var item in enumerable)
+            {
+                action(item);
+            }
         }
     }
 }
